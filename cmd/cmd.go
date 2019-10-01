@@ -129,7 +129,7 @@ drop table TABLE_NAME;`)
 				log.Println("> already migrated: ", name)
 			}else {
 				up, _ := readFile(*path + "/" + name)
-				if err := exec(up); err != nil {
+				if err := exec(tx, up); err != nil {
 					tx.Rollback()
 					log.Fatal(err)
 					return
@@ -153,7 +153,7 @@ drop table TABLE_NAME;`)
 		for i := savedLen -1; i >= 0; i-- {
 			name := saved[i]
 			_, down := readFile(*path + "/" + name)
-			if err := exec(down); err != nil {
+			if err := exec(tx, down); err != nil {
 				tx.Rollback()
 				log.Fatal(err)
 				return
@@ -168,7 +168,7 @@ drop table TABLE_NAME;`)
 		tx.Commit()
 		return
 	case "rollback":
-		stepsArg := flag.Arg(0)
+		stepsArg := flag.Arg(1)
 		if stepsArg == "" {
 			stepsArg = "1"
 		}
@@ -182,7 +182,7 @@ drop table TABLE_NAME;`)
 		for i := savedLen -1; i >= 0; i-- {
 			name := saved[i]
 			_, down := readFile(*path + "/" + name)
-			if err := exec(down); err != nil {
+			if err := exec(tx, down); err != nil {
 				tx.Rollback()
 				log.Fatal(err)
 				return
@@ -253,8 +253,8 @@ func removeMigration(priority int) error {
 	return nil
 }
 
-func exec(query string, args ...interface{}) error {
-	_, err := db.Exec(query, args...)
+func exec(tx *sql.Tx, query string, args ...interface{}) error {
+	_, err := tx.Exec(query, args...)
 	if err != nil {
 		return err
 	}
