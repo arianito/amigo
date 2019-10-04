@@ -70,6 +70,24 @@ func readFile(name string) (string, string) {
 	return up, down
 }
 
+func Transact(db *sql.DB, txFunc func(*sql.Tx) error) (err error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p) // re-throw panic after Rollback
+		} else if err != nil {
+			tx.Rollback() // err is non-nil; don't change it
+		} else {
+			err = tx.Commit() // err is nil; if Commit returns error update err
+		}
+	}()
+	err = txFunc(tx)
+	return err
+}
 func Init() {
 	path := flag.String("path", "migrations", "migrations path relative to current directory")
 	flag.Parse()
@@ -107,101 +125,103 @@ drop table TABLE_NAME;`)
 		return
 	case "up":
 		configSql()
-		createMigrationTable()
+		err := Transact(db, func(tx *sql.Tx) error {
 
-		tx, _ := db.Begin()
+			createMigrationTable()
+			saved := retrieveMigratedList()
+			files, err := ioutil.ReadDir(*path)
+			if err != nil {
+				return err
+			}
+			var names []string
+			for _, f := range files {
+				if !f.IsDir() {
+					names = append(names, f.Name())
+				}
+			}
+			sort.Strings(names)
+			savedLen := len(saved)
 
-
-		saved := retrieveMigratedList(tx)
-		files, err := ioutil.ReadDir(*path)
+			for i, name := range names {
+				if i < savedLen && saved[i] == name {
+					fmt.Println("> already migrated: ", name)
+				} else {
+					up, _ := readFile(*path + "/" + name)
+					err = exec(tx, up)
+					if err != nil {
+						return err
+					}
+					err := addMigration(name, i)
+					if  err != nil {
+						return err
+					}
+					log.Println(">> succeed : ", name)
+				}
+			}
+			return nil
+		})
 		if err != nil {
-			log.Fatal(err)
+			fmt.Println(err)
 		}
-		var names []string
-		for _, f := range files {
-			if !f.IsDir() {
-				names = append(names, f.Name())
-			}
-		}
-		sort.Strings(names)
-		savedLen := len(saved)
-
-		for i, name := range names {
-			if i < savedLen && saved[i] == name {
-				log.Println("> already migrated: ", name)
-			}else {
-				up, _ := readFile(*path + "/" + name)
-				if err := exec(tx, up); err != nil {
-					tx.Rollback()
-					log.Fatal(err)
-					return
-				}
-				if err := addMigration(tx, name, i); err != nil {
-					tx.Rollback()
-					log.Fatal(err)
-					return
-				}
-				log.Println(">> succeed : ", name)
-			}
-		}
-		tx.Commit()
 		return
 	case "down":
 		configSql()
-		createMigrationTable()
+		err := Transact(db, func(tx *sql.Tx) error {
+			createMigrationTable()
+			saved := retrieveMigratedList()
+			savedLen := len(saved)
+			for i := savedLen - 1; i >= 0; i-- {
+				name := saved[i]
+				_, down := readFile(*path + "/" + name)
+				if err := exec(tx, down); err != nil {
+					return err
+				}
+				if err := removeMigration(i); err != nil {
+					return err
+				}
+				log.Println(">> rolled-back : ", name)
+			}
+			return nil
+		})
 
-		tx, _ := db.Begin()
-		saved := retrieveMigratedList(tx)
-		savedLen := len(saved)
-		for i := savedLen -1; i >= 0; i-- {
-			name := saved[i]
-			_, down := readFile(*path + "/" + name)
-			if err := exec(tx, down); err != nil {
-				tx.Rollback()
-				log.Fatal(err)
-				return
-			}
-			if err := removeMigration(tx, i); err != nil {
-				tx.Rollback()
-				log.Fatal(err)
-				return
-			}
-			log.Println(">> rolled-back : ", name)
+		if err != nil {
+			fmt.Println(err)
 		}
-		tx.Commit()
 		return
 	case "rollback":
 		stepsArg := flag.Arg(1)
 		if stepsArg == "" {
 			stepsArg = "1"
 		}
-		tx, _ := db.Begin()
 		steps, _ := strconv.Atoi(stepsArg)
 		configSql()
-		createMigrationTable()
-		saved := retrieveMigratedList(tx)
-		savedLen := len(saved)
-		k := 0
-		for i := savedLen -1; i >= 0; i-- {
-			name := saved[i]
-			_, down := readFile(*path + "/" + name)
-			if err := exec(tx, down); err != nil {
-				tx.Rollback()
-				log.Fatal(err)
-				return
+
+		configSql()
+		err := Transact(db, func(tx *sql.Tx) error {
+			createMigrationTable()
+			saved := retrieveMigratedList()
+			savedLen := len(saved)
+			k := 0
+			for i := savedLen - 1; i >= 0; i-- {
+				name := saved[i]
+				_, down := readFile(*path + "/" + name)
+				if err := exec(tx, down); err != nil {
+					return err
+				}
+				if err := removeMigration(i); err != nil {
+					return err
+				}
+				log.Println(">> rolled-back : ", name)
+				k++
+				if k == steps {
+					break
+				}
 			}
-			if err := removeMigration(tx, i); err != nil {
-				tx.Rollback()
-				log.Fatal(err)
-				return
-			}
-			log.Println(">> rolled-back : ", name)
-			k ++
-			if k == steps {
-				break
-			}
+			return nil
+		})
+		if err != nil {
+			fmt.Println(err)
 		}
-		tx.Commit()
 		return
 	}
 }
@@ -224,9 +244,9 @@ func createMigrationTable() {
 	}
 }
 
-func retrieveMigratedList(tx *sql.Tx) []string {
+func retrieveMigratedList() []string {
 	var names []string
-	rows, err := tx.Query(`select name from amigo_migrations order by priority;`)
+	rows, err := db.Query(`select name from amigo_migrations order by priority;`)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -241,15 +261,15 @@ func retrieveMigratedList(tx *sql.Tx) []string {
 	return names
 }
 
-func addMigration(tx *sql.Tx,name string, priority int) error {
-	_, err := tx.Exec(`insert into amigo_migrations (name, priority) values (?, ?);`, name, priority)
+func addMigration(name string, priority int) error {
+	_, err := db.Exec(`insert into amigo_migrations (name, priority) values (?, ?);`, name, priority)
 	if err != nil {
 		return err
 	}
 	return nil
 }
-func removeMigration(tx *sql.Tx, priority int) error {
-	_, err := tx.Exec(`delete from amigo_migrations where priority=?;`, priority)
+func removeMigration(priority int) error {
+	_, err := db.Exec(`delete from amigo_migrations where priority=?;`, priority)
 	if err != nil {
 		return err
 	}
