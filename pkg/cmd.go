@@ -1,4 +1,4 @@
-package cmd
+package amigo
 
 import (
 	"bufio"
@@ -17,27 +17,6 @@ import (
 	"time"
 )
 
-func getEnv(key, def string) string {
-	op := os.Getenv(key)
-	if op == "" {
-		return def
-	}
-	return op
-}
-
-var (
-	DBDriver = getEnv("DB_DRIVER", "mysql")
-	DBQuery  = getEnv("DB_QUERY", "")
-)
-var db *sql.DB
-
-func configSql() {
-	var err error
-	db, err = sql.Open(DBDriver, DBQuery)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
 
 func readFile(name string) (string, string) {
 	file, err := os.Open(name)
@@ -88,9 +67,8 @@ func Transact(db *sql.DB, txFunc func(*sql.Tx) error) (err error) {
 	err = txFunc(tx)
 	return err
 }
-func Init() {
-	path := flag.String("path", "migrations", "migrations path relative to current directory")
-	flag.Parse()
+func Migrate(path string, db *sql.DB) {
+
 	action := flag.Arg(0)
 	if action == "" {
 		action = "create"
@@ -118,18 +96,17 @@ drop table TABLE_NAME;`)
 /* -- migrate_down -- */`)
 		}
 		_ = ioutil.WriteFile(
-			fmt.Sprintf("%s/%s_create_%s.sql", *path, time.Now().UTC().Format("2006_01_02_15_04_05"), propertyName),
+			fmt.Sprintf("%s/%s_create_%s.sql", path, time.Now().UTC().Format("2006_01_02_15_04_05"), propertyName),
 			data,
 			0644,
 		)
 		return
 	case "up":
-		configSql()
 		err := Transact(db, func(tx *sql.Tx) error {
 
-			createMigrationTable()
-			saved := retrieveMigratedList()
-			files, err := ioutil.ReadDir(*path)
+			createMigrationTable(db)
+			saved := retrieveMigratedList(db)
+			files, err := ioutil.ReadDir(path)
 			if err != nil {
 				return err
 			}
@@ -146,12 +123,12 @@ drop table TABLE_NAME;`)
 				if i < savedLen && saved[i] == name {
 					fmt.Println("> already migrated: ", name)
 				} else {
-					up, _ := readFile(*path + "/" + name)
+					up, _ := readFile(path + "/" + name)
 					err = exec(tx, up)
 					if err != nil {
 						return err
 					}
-					err := addMigration(name, i)
+					err := addMigration(db, name, i)
 					if  err != nil {
 						return err
 					}
@@ -165,18 +142,17 @@ drop table TABLE_NAME;`)
 		}
 		return
 	case "down":
-		configSql()
 		err := Transact(db, func(tx *sql.Tx) error {
-			createMigrationTable()
-			saved := retrieveMigratedList()
+			createMigrationTable(db)
+			saved := retrieveMigratedList(db)
 			savedLen := len(saved)
 			for i := savedLen - 1; i >= 0; i-- {
 				name := saved[i]
-				_, down := readFile(*path + "/" + name)
+				_, down := readFile(path + "/" + name)
 				if err := exec(tx, down); err != nil {
 					return err
 				}
-				if err := removeMigration(i); err != nil {
+				if err := removeMigration(db, i); err != nil {
 					return err
 				}
 				log.Println(">> rolled-back : ", name)
@@ -194,21 +170,18 @@ drop table TABLE_NAME;`)
 			stepsArg = "1"
 		}
 		steps, _ := strconv.Atoi(stepsArg)
-		configSql()
-
-		configSql()
 		err := Transact(db, func(tx *sql.Tx) error {
-			createMigrationTable()
-			saved := retrieveMigratedList()
+			createMigrationTable(db)
+			saved := retrieveMigratedList(db)
 			savedLen := len(saved)
 			k := 0
 			for i := savedLen - 1; i >= 0; i-- {
 				name := saved[i]
-				_, down := readFile(*path + "/" + name)
+				_, down := readFile(path + "/" + name)
 				if err := exec(tx, down); err != nil {
 					return err
 				}
-				if err := removeMigration(i); err != nil {
+				if err := removeMigration(db, i); err != nil {
 					return err
 				}
 				log.Println(">> rolled-back : ", name)
@@ -230,7 +203,7 @@ func dashify(in string) string {
 	return strings.ReplaceAll(strings.ToLower(in), " ", "_")
 }
 
-func createMigrationTable() {
+func createMigrationTable(db *sql.DB) {
 	_, err := db.Exec(`create table if not exists amigo_migrations (
 	id int not null auto_increment,
 	name varchar(255) not null,
@@ -244,7 +217,7 @@ func createMigrationTable() {
 	}
 }
 
-func retrieveMigratedList() []string {
+func retrieveMigratedList(db *sql.DB) []string {
 	var names []string
 	rows, err := db.Query(`select name from amigo_migrations order by priority;`)
 	if err != nil {
@@ -261,14 +234,14 @@ func retrieveMigratedList() []string {
 	return names
 }
 
-func addMigration(name string, priority int) error {
+func addMigration(db *sql.DB, name string, priority int) error {
 	_, err := db.Exec(`insert into amigo_migrations (name, priority) values (?, ?);`, name, priority)
 	if err != nil {
 		return err
 	}
 	return nil
 }
-func removeMigration(priority int) error {
+func removeMigration(db *sql.DB, priority int) error {
 	_, err := db.Exec(`delete from amigo_migrations where priority=?;`, priority)
 	if err != nil {
 		return err
