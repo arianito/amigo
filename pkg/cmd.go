@@ -121,7 +121,7 @@ drop table TABLE_NAME;`)
 
 			for i, name := range names {
 				if i < savedLen && saved[i] == name {
-					fmt.Println("> already migrated: ", name)
+					log.Println("> already migrated: ", name)
 				} else {
 					up, _ := readFile(path + "/" + name)
 					err = exec(tx, up)
