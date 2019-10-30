@@ -25,5 +25,10 @@ func main()  {
 		log.Fatal(err)
 	}
 
-	amigo.Migrate(*path, db)
+	action := flag.Arg(0)
+	option := flag.Arg(1)
+	if action == "" {
+		action = "create"
+	}
+	amigo.Migrate(*path, action, option, db)
 }

@@ -3,7 +3,6 @@ package amigo
 import (
 	"bufio"
 	"database/sql"
-	"flag"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
@@ -67,15 +66,10 @@ func Transact(db *sql.DB, txFunc func(*sql.Tx) error) (err error) {
 	err = txFunc(tx)
 	return err
 }
-func Migrate(path string, db *sql.DB) {
-
-	action := flag.Arg(0)
-	if action == "" {
-		action = "create"
-	}
+func Migrate(path, action, option string, db *sql.DB) {
 	switch action {
 	case "create":
-		propertyName := flag.Arg(1)
+		propertyName := option
 		if propertyName == "" {
 			propertyName = "some"
 		}
@@ -165,7 +159,7 @@ drop table TABLE_NAME;`)
 		}
 		return
 	case "rollback":
-		stepsArg := flag.Arg(1)
+		stepsArg := option
 		if stepsArg == "" {
 			stepsArg = "1"
 		}
