@@ -138,7 +138,7 @@ drop table TABLE_NAME;`)
 			return nil
 		})
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
 		return
 	case "down":
@@ -161,7 +161,7 @@ drop table TABLE_NAME;`)
 		})
 
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
 		return
 	case "rollback":
@@ -193,7 +193,7 @@ drop table TABLE_NAME;`)
 			return nil
 		})
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
 		return
 	}
