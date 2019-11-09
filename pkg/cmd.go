@@ -103,7 +103,8 @@ drop table TABLE_NAME;`)
 			}
 			var names []string
 			for _, f := range files {
-				if !f.IsDir() {
+				nm := f.Name()
+				if !f.IsDir() && nm[0] != '.' {
 					names = append(names, f.Name())
 				}
 			}
@@ -115,9 +116,11 @@ drop table TABLE_NAME;`)
 					log.Println("> already migrated: ", name)
 				} else {
 					up, _ := readFile(path + "/" + name)
-					err = exec(tx, up)
-					if err != nil {
-						return err
+					if up != "" {
+						err = exec(tx, up)
+						if err != nil {
+							return err
+						}
 					}
 					err := addMigration(db, name, i)
 					if  err != nil {
@@ -140,8 +143,10 @@ drop table TABLE_NAME;`)
 			for i := savedLen - 1; i >= 0; i-- {
 				name := saved[i]
 				_, down := readFile(path + "/" + name)
-				if err := exec(tx, down); err != nil {
-					return err
+				if down != "" {
+					if err := exec(tx, down); err != nil {
+						return err
+					}
 				}
 				if err := removeMigration(db, i); err != nil {
 					return err
@@ -169,8 +174,10 @@ drop table TABLE_NAME;`)
 			for i := savedLen - 1; i >= 0; i-- {
 				name := saved[i]
 				_, down := readFile(path + "/" + name)
-				if err := exec(tx, down); err != nil {
-					return err
+				if down != "" {
+					if err := exec(tx, down); err != nil {
+						return err
+					}
 				}
 				if err := removeMigration(db, i); err != nil {
 					return err
