@@ -13,7 +13,11 @@ import (
 	"time"
 )
 
+var migrationTable = "amigo_migrations"
 
+func SetTable(name string) {
+	migrationTable = name
+}
 func readFile(name string) (string, string) {
 	file, err := os.Open(name)
 	if err != nil {
@@ -202,7 +206,7 @@ func dashify(in string) string {
 }
 
 func createMigrationTable(db *sql.DB) {
-	_, err := db.Exec(`create table if not exists amigo_migrations (
+	_, err := db.Exec(`create table if not exists `+migrationTable+` (
 	id int not null auto_increment,
 	name varchar(255) not null,
 	priority int not null,
@@ -217,7 +221,7 @@ func createMigrationTable(db *sql.DB) {
 
 func retrieveMigratedList(db *sql.DB) []string {
 	var names []string
-	rows, err := db.Query(`select name from amigo_migrations order by priority;`)
+	rows, err := db.Query(`select name from `+migrationTable+` order by priority;`)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -233,14 +237,14 @@ func retrieveMigratedList(db *sql.DB) []string {
 }
 
 func addMigration(db *sql.DB, name string, priority int) error {
-	_, err := db.Exec(`insert into amigo_migrations (name, priority) values (?, ?);`, name, priority)
+	_, err := db.Exec(`insert into `+migrationTable+` (name, priority) values (?, ?);`, name, priority)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 func removeMigration(db *sql.DB, priority int) error {
-	_, err := db.Exec(`delete from amigo_migrations where priority=?;`, priority)
+	_, err := db.Exec(`delete from `+migrationTable+` where priority=?;`, priority)
 	if err != nil {
 		return err
 	}
