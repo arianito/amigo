@@ -13,10 +13,15 @@ import (
 	"time"
 )
 
+var dialect = "mysql"
 var migrationTable = "amigo_migrations"
 
 func SetTable(name string) {
 	migrationTable = name
+}
+
+func SetDialect(name string) {
+	dialect = name
 }
 func readFile(name string) (string, string) {
 	file, err := os.Open(name)
@@ -49,23 +54,8 @@ func readFile(name string) (string, string) {
 	return up, down
 }
 
-func Transact(db *sql.DB, txFunc func(*sql.Tx) error) (err error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return
-	}
-	defer func() {
-		if p := recover(); p != nil {
-			tx.Rollback()
-			panic(p) // re-throw panic after Rollback
-		} else if err != nil {
-			tx.Rollback() // err is non-nil; don't change it
-		} else {
-			err = tx.Commit() // err is nil; if Commit returns error update err
-		}
-	}()
-	err = txFunc(tx)
-	return err
+func Transact(txFunc func() error) error {
+	return txFunc()
 }
 func Migrate(path, action, option string, db *sql.DB) {
 	switch action {
@@ -97,7 +87,7 @@ drop table TABLE_NAME;`)
 		)
 		return
 	case "up":
-		err := Transact(db, func(tx *sql.Tx) error {
+		err := Transact(func() error {
 
 			createMigrationTable(db)
 			saved := retrieveMigratedList(db)
@@ -121,7 +111,7 @@ drop table TABLE_NAME;`)
 				} else {
 					up, _ := readFile(path + "/" + name)
 					if up != "" {
-						err = exec(tx, up)
+						err = exec(db, up)
 						if err != nil {
 							return err
 						}
@@ -140,7 +130,7 @@ drop table TABLE_NAME;`)
 		}
 		return
 	case "down":
-		err := Transact(db, func(tx *sql.Tx) error {
+		err := Transact(func() error {
 			createMigrationTable(db)
 			saved := retrieveMigratedList(db)
 			savedLen := len(saved)
@@ -148,7 +138,7 @@ drop table TABLE_NAME;`)
 				name := saved[i]
 				_, down := readFile(path + "/" + name)
 				if down != "" {
-					if err := exec(tx, down); err != nil {
+					if err := exec(db, down); err != nil {
 						return err
 					}
 				}
@@ -170,7 +160,7 @@ drop table TABLE_NAME;`)
 			stepsArg = "1"
 		}
 		steps, _ := strconv.Atoi(stepsArg)
-		err := Transact(db, func(tx *sql.Tx) error {
+		err := Transact(func() error {
 			createMigrationTable(db)
 			saved := retrieveMigratedList(db)
 			savedLen := len(saved)
@@ -179,7 +169,7 @@ drop table TABLE_NAME;`)
 				name := saved[i]
 				_, down := readFile(path + "/" + name)
 				if down != "" {
-					if err := exec(tx, down); err != nil {
+					if err := exec(db, down); err != nil {
 						return err
 					}
 				}
@@ -206,14 +196,26 @@ func dashify(in string) string {
 }
 
 func createMigrationTable(db *sql.DB) {
-	_, err := db.Exec(`create table if not exists `+migrationTable+` (
+	query := ""
+	if dialect == "mysql" {
+		query = `create table if not exists `+migrationTable+` (
 	id int not null auto_increment,
 	name varchar(255) not null,
 	priority int not null,
 	created_at timestamp not null default current_timestamp,
-	constraint amigo_migrations_id_pk primary key (id),
-	constraint amigo_migrations_name_uq unique (name)
-);`)
+	primary key (id),
+	unique (name)
+);`
+	}else if dialect == "sqlite3" {
+		query = `create table if not exists `+migrationTable+` (
+	id integer primary key autoincrement,
+	name varchar(255) not null,
+	priority int not null,
+	created_at timestamp not null default current_timestamp,
+	unique (name)
+);`
+	}
+	_, err := db.Exec(query)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -251,8 +253,8 @@ func removeMigration(db *sql.DB, priority int) error {
 	return nil
 }
 
-func exec(tx *sql.Tx, query string, args ...interface{}) error {
-	_, err := tx.Exec(query, args...)
+func exec(db *sql.DB, query string, args ...interface{}) error {
+	_, err := db.Exec(query, args...)
 	if err != nil {
 		return err
 	}
